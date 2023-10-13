@@ -1,5 +1,5 @@
 {
-  "name": "io.confluent.example.app",
+  "name": "io.confluent.example",
   "sourceDirectory": "my_example",
   "exposedModules": [
     "MyApp"
