@@ -1,20 +1,28 @@
 module Morphir.KafkaStreams.Backend exposing (..)
 
 import Dict exposing (Dict)
+
 import Morphir.File.FileMap exposing (FileMap)
+
 import Morphir.IR.AccessControlled as AccessControlled exposing (AccessControlled)
 import Morphir.IR.Distribution as Distribution exposing (Distribution)
-import Morphir.IR.FQName as FQName exposing (FQName)
+import Morphir.IR.FQName as FQName exposing (FQName, getLocalName)
 import Morphir.IR.Literal exposing (Literal(..))
 import Morphir.IR.Module as Module exposing (ModuleName)
 import Morphir.IR.Name as Name exposing (Name)
 import Morphir.IR.Type as Type exposing (Type)
 import Morphir.IR.Path as Path exposing (Path)
+import Morphir.IR.Value as Value exposing (TypedValue)
+
+
 import Morphir.KafkaStreams.API as KafkaStreams
 import Morphir.KafkaStreams.AST as KafkaStreamsAST exposing(..)
+
 import Morphir.Scala.AST as Scala
 import Morphir.Scala.Common as Common
 import Morphir.Scala.PrettyPrinter as PrettyPrinter
+
+import Morphir.SDK.ResultList as ResultList
 
 
 
@@ -27,8 +35,8 @@ type Error
     | MappingError KafkaStreamsAST.Error
 
 mapDistribution : Options -> Distribution -> FileMap
-mapDistribution _ distro =
-    case distro of
+mapDistribution _ ir =
+   case ir of
         Distribution.Library packageName dependencies packageDef ->
             packageDef.modules
                 |> Dict.toList
@@ -54,16 +62,6 @@ mapDistribution _ distro =
 
                             _= Debug.log "Package Path" (String.join "." packagePath)
 
-                            memberDecl : Scala.MemberDecl
-                            memberDecl = Scala.FunctionDecl
-                                { modifiers = []
-                                , name = (Common.mapValueName (Name.fromString "foo"))
-                                , typeArgs = []
-                                , args = []
-                                , returnType = Just KafkaStreams.kStream
-                                , body = Just (Scala.Literal (Scala.StringLit "bar"))
-                                }
-
                             object : Scala.TypeDecl
                             object =
                                 Scala.Object
@@ -73,7 +71,16 @@ mapDistribution _ distro =
                                     , members = accessControlledModuleDef.value.values
                                                     |> Dict.toList
                                                     |> List.filterMap
-                                                        (\( valueName, _ ) -> Just (Scala.withoutAnnotation memberDecl))
+                                                        (\( valueName, _ ) ->
+                                                            case mapFunctionDefinition ir (packageName, moduleName, valueName) of
+                                                                Ok memberDecl -> Just (Scala.withoutAnnotation memberDecl)
+                                                                Err err ->
+                                                                    let
+                                                                        _= Debug.log "CRASH" err
+                                                                    in
+                                                                        Nothing
+                                                        )
+
                                     , body = Nothing
                                     }
 
@@ -93,4 +100,53 @@ mapDistribution _ distro =
 
                     )
                 |> Dict.fromList
+
+
+mapFunctionDefinition: Distribution -> FQName -> Result Error Scala.MemberDecl
+mapFunctionDefinition ir ((_, _, functionName) as fullyQualifiedFunctionName) =
+    let
+        _= Debug.log "Compiling Function " (Name.toCamelCase functionName)
+
+        mapFunctionInputs : List ( Name, va, Type () ) -> Result Error (List Scala.ArgDecl)
+        mapFunctionInputs inputTypes =
+            inputTypes
+                |> List.map
+                    (\( argName, _, argType ) ->
+                        -- we only support List type which maps to a KStream
+                        -- could we support Set type by mapppin it to a KTable (?)
+                        case argType of
+                            Type.Reference _ ( [ [ "morphir" ], [ "s", "d", "k" ] ], [ [ "list" ] ], [ "list" ] ) [ _ ] ->
+                                Ok
+                                    { modifiers = []
+                                    , tpe = KafkaStreams.kStream
+                                    , name = Name.toCamelCase argName
+                                    , defaultValue = Nothing
+                                    }
+
+                            other -> Err (UnknownArgumentType other)
+                    )
+                |> ResultList.keepFirstError
+
+        mapFunctionBody : TypedValue -> Result Error Scala.Value
+        mapFunctionBody ast = Ok (Scala.Literal (Scala.StringLit "bar"))
+    in
+        ir
+           |> Distribution.lookupValueDefinition fullyQualifiedFunctionName
+            |> Result.fromMaybe (FunctionNotFound fullyQualifiedFunctionName)
+            |> Result.andThen
+                (\functionDef ->
+                    Result.map2
+                        (\scalaArgs scalaFunctionBody ->
+                            Scala.FunctionDecl
+                                { modifiers = []
+                                , name = functionName |> Name.toCamelCase
+                                , typeArgs = []
+                                , args = [ scalaArgs ]
+                                , returnType = Just KafkaStreams.kStream
+                                , body = Just scalaFunctionBody
+                                }
+                        )
+                        (mapFunctionInputs functionDef.inputTypes)
+                        (mapFunctionBody functionDef.body)
+                )
 

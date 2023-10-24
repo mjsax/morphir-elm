@@ -40,6 +40,6 @@ job1: List String -> List String
 job1 input =
       input 
 
-job2: List String -> List String
-job2 kstream =
+jobWithLongName: List String -> List String
+jobWithLongName kstream =
         kstream
