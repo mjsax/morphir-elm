@@ -1,5 +1,7 @@
 module Morphir.KafkaStreams.Backend exposing (..)
 
+
+
 import Dict exposing (Dict)
 
 import Morphir.File.FileMap exposing (FileMap)
@@ -13,7 +15,6 @@ import Morphir.IR.Name as Name exposing (Name)
 import Morphir.IR.Type as Type exposing (Type)
 import Morphir.IR.Path as Path exposing (Path)
 import Morphir.IR.Value as Value exposing (TypedValue)
-
 
 import Morphir.KafkaStreams.API as KafkaStreams
 import Morphir.KafkaStreams.AST as KafkaStreamsAST exposing(..)
@@ -33,6 +34,8 @@ type Error
     = FunctionNotFound FQName
     | UnknownArgumentType (Type ())
     | MappingError KafkaStreamsAST.Error
+
+
 
 mapDistribution : Options -> Distribution -> FileMap
 mapDistribution _ ir =
@@ -128,7 +131,11 @@ mapFunctionDefinition ir ((_, _, functionName) as fullyQualifiedFunctionName) =
                 |> ResultList.keepFirstError
 
         mapFunctionBody : TypedValue -> Result Error Scala.Value
-        mapFunctionBody ast = Ok (Scala.Literal (Scala.StringLit "bar"))
+        mapFunctionBody ast =
+            ast
+                |> KafkaStreamsAST.objectExpressionFromValue ir
+                |> Result.mapError MappingError
+                |> Result.andThen mapObjectExpressionToScala
     in
         ir
            |> Distribution.lookupValueDefinition fullyQualifiedFunctionName
@@ -150,3 +157,8 @@ mapFunctionDefinition ir ((_, _, functionName) as fullyQualifiedFunctionName) =
                         (mapFunctionBody functionDef.body)
                 )
 
+mapObjectExpressionToScala : ObjectExpression -> Result Error Scala.Value
+mapObjectExpressionToScala objectExpression =
+    case objectExpression of
+        From name ->
+            Name.toCamelCase name |> Scala.Variable |> Ok
