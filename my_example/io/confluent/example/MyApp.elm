@@ -36,10 +36,6 @@ job input =
             )
 -}
 
-job1: List String -> List String
-job1 input =
-      input 
-
-jobWithLongName: List String -> List String
-jobWithLongName kstream =
+example: List String -> List String
+example kstream =
         kstream
