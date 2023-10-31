@@ -38,4 +38,6 @@ job input =
 
 example: List String -> List String
 example kstream =
-        kstream
+    kstream
+        |> List.filter (\v -> True)
+

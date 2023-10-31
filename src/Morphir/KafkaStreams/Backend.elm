@@ -79,7 +79,7 @@ mapDistribution _ ir =
                                                                 Ok memberDecl -> Just (Scala.withoutAnnotation memberDecl)
                                                                 Err err ->
                                                                     let
-                                                                        _= Debug.log "CRASH" err
+                                                                        _= Debug.log "CRASH -- Kafka Streams: " err
                                                                     in
                                                                         Nothing
                                                         )
@@ -138,7 +138,7 @@ mapFunctionDefinition ir ((_, _, functionName) as fullyQualifiedFunctionName) =
                 |> Result.andThen mapObjectExpressionToScala
     in
         ir
-           |> Distribution.lookupValueDefinition fullyQualifiedFunctionName
+            |> Distribution.lookupValueDefinition fullyQualifiedFunctionName
             |> Result.fromMaybe (FunctionNotFound fullyQualifiedFunctionName)
             |> Result.andThen
                 (\functionDef ->
@@ -156,9 +156,43 @@ mapFunctionDefinition ir ((_, _, functionName) as fullyQualifiedFunctionName) =
                         (mapFunctionInputs functionDef.inputTypes)
                         (mapFunctionBody functionDef.body)
                 )
-
+ 
 mapObjectExpressionToScala : ObjectExpression -> Result Error Scala.Value
 mapObjectExpressionToScala objectExpression =
     case objectExpression of
         From name ->
             Name.toCamelCase name |> Scala.Variable |> Ok
+
+        Filter predicate inputKStream ->
+            mapObjectExpressionToScala  inputKStream
+                |> Result.map
+                    (KafkaStreams.streamFilter
+                        (mapExpression predicate)
+                    )
+
+mapExpression : Expression -> Scala.Value
+mapExpression expression =
+    case expression of
+        Literal literal ->
+            mapLiteral literal |> Scala.Literal
+
+mapLiteral : Literal -> Scala.Lit
+mapLiteral l =
+    case l of
+        BoolLiteral bool ->
+            Scala.BooleanLit bool
+
+        CharLiteral char ->
+            Scala.CharacterLit char
+
+        StringLiteral string ->
+            Scala.StringLit string
+
+        WholeNumberLiteral int ->
+            Scala.IntegerLit int
+
+        FloatLiteral float ->
+            Scala.FloatLit float
+
+        DecimalLiteral _ ->
+            Debug.todo "branch 'DecimalLiteral _' not implemented"
