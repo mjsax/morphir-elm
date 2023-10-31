@@ -29,6 +29,7 @@ type ObjectExpression
 type Expression
     = Literal Literal
     | Variable String
+    | Field String
     | Lambda Name Expression -- we limit our lambda to a single input parameter (namly the Kafka Streams value) for now
     | BinaryOperation String Expression Expression
 
@@ -40,7 +41,6 @@ objectExpressionFromValue ir morphirValue =
             From varName |> Ok
 
         -- List.filter
-
         Value.Apply _ (Value.Apply _ (Value.Reference _ ( [ [ "morphir" ], [ "s", "d", "k" ] ], [ [ "list" ] ], [ "filter" ] )) predicate) sourceKStream ->
             objectExpressionFromValue ir sourceKStream
                 |> Result.andThen
@@ -64,6 +64,10 @@ expressionFromValue ir morphirValue =
         Value.Variable _ name ->
             Name.toCamelCase name |> Variable |> Ok
 
+        Value.Field _ _ name ->
+            Name.toCamelCase name |> Field |> Ok
+
+
         Value.Lambda _ (Value.AsPattern _ (Value.WildcardPattern _) parameter) body ->
             expressionFromValue ir body
                 |> Result.map (\expression -> Lambda parameter expression)
@@ -73,6 +77,14 @@ expressionFromValue ir morphirValue =
             Result.map3
                 BinaryOperation
                 (binaryOpString (FQName.fQName (Path.fromList [ Name.fromList [ "morphir" ] , Name.fromList [ "s", "d", "k"] ]) (Path.fromList [ Name.fromList [ "basics" ] ]) (Name.fromList [ "equal" ])))
+                (expressionFromValue ir leftExpression)
+                (expressionFromValue ir rightExpression)
+
+        -- map binary function 'less than/ <'
+        Value.Apply _ (Value.Apply _ (Value.Reference _ ( [ [ "morphir" ], [ "s", "d", "k" ] ], [ [ "basics" ] ], [ "less", "than" ] )) leftExpression) rightExpression ->
+            Result.map3
+                BinaryOperation
+                (binaryOpString (FQName.fQName (Path.fromList [ Name.fromList [ "morphir" ] , Name.fromList [ "s", "d", "k"] ]) (Path.fromList [ Name.fromList [ "basics" ] ]) (Name.fromList [ "less", "than" ])))
                 (expressionFromValue ir leftExpression)
                 (expressionFromValue ir rightExpression)
 
@@ -87,6 +99,9 @@ binaryOpString fQName =
     case FQName.toString fQName of
         "Morphir.SDK:Basics:equal" ->
             Ok "=="
+
+        "Morphir.SDK:Basics:lessThan" ->
+            Ok "<"
 
         _ ->
             UnsupportedOperatorReference fQName |> Err

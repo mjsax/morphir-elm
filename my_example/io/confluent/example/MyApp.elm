@@ -9,13 +9,14 @@ request availability requestedQuantity =
         Err "Insufficient availability"
 -}
 
-{-
-
-type alias RecordA =
+-- MyRecord is hard-codes as input/output generic for now
+type alias MyRecord =
     { number1 : Int
     , number2 : Int
     }
 
+
+{-
 type alias RecordB =
     { sum : Int
     , product : Int
@@ -26,7 +27,7 @@ type alias RecordB =
 job : List RecordA -> List RecordB
 job input =
     input
-        |> List.filter (\a -> a.field2 < 100)
+        |> List.filter (\a -> a.number1 < 100)
         |> List.map
             (\a ->
                 { sum = a.number1 + a.number2
@@ -36,8 +37,15 @@ job input =
             )
 -}
 
-example: List String -> List String
-example kstream =
+
+exampleS: List String -> List String
+exampleS kstream =
     kstream
         |> List.filter (\myValue -> myValue == "keep-it")
 
+
+
+exampleR: List MyRecord-> List MyRecord
+exampleR kstream =
+    kstream
+        |> List.filter (\myValue -> myValue.number1 < 100)

@@ -8,6 +8,7 @@ import Morphir.File.FileMap exposing (FileMap)
 
 import Morphir.IR.AccessControlled as AccessControlled exposing (AccessControlled)
 import Morphir.IR.Distribution as Distribution exposing (Distribution)
+import Morphir.IR.Documented exposing (Documented)
 import Morphir.IR.FQName as FQName exposing (FQName, getLocalName)
 import Morphir.IR.Literal exposing (Literal(..))
 import Morphir.IR.Module as Module exposing (ModuleName)
@@ -33,6 +34,7 @@ type alias Options =
 type Error
     = FunctionNotFound FQName
     | UnknownArgumentType (Type ())
+    | UnknownType
     | MappingError KafkaStreamsAST.Error
 
 
@@ -65,13 +67,18 @@ mapDistribution _ ir =
 
                             _= Debug.log "Package Path" (String.join "." packagePath)
 
-                            object : Scala.TypeDecl
-                            object =
-                                Scala.Object
-                                    { modifiers = []
-                                    , name = programName 
-                                    , extends = []
-                                    , members = accessControlledModuleDef.value.values
+                            -- generate Scala types (eg, case classes etc)
+                            typeMembers : List (Scala.Annotated Scala.MemberDecl)
+                            typeMembers = accessControlledModuleDef.value.types
+                                                    |> Dict.toList
+                                                    |> List.concatMap
+                                                        (\types ->
+                                                            mapTypeMember types
+                                                        )
+
+                            -- generate Scala function
+                            functionMembers : List (Scala.Annotated Scala.MemberDecl)
+                            functionMembers = accessControlledModuleDef.value.values
                                                     |> Dict.toList
                                                     |> List.filterMap
                                                         (\( valueName, _ ) ->
@@ -84,6 +91,13 @@ mapDistribution _ ir =
                                                                         Nothing
                                                         )
 
+                            object : Scala.TypeDecl
+                            object =
+                                Scala.Object
+                                    { modifiers = []
+                                    , name = programName
+                                    , extends = []
+                                    , members = List.append typeMembers functionMembers
                                     , body = Nothing
                                     }
 
@@ -104,11 +118,117 @@ mapDistribution _ ir =
                     )
                 |> Dict.fromList
 
+mapTypeMember : ( Name, AccessControlled (Documented (Type.Definition ta)) ) -> List (Scala.Annotated Scala.MemberDecl)
+mapTypeMember (typeName, accessControlledDocumentedTypeDef) =
+    case accessControlledDocumentedTypeDef.value.value of
+        Type.TypeAliasDefinition typeParams (Type.Record _ fields) ->
+            [ Scala.withoutAnnotation
+                (Scala.MemberTypeDecl
+                    (Scala.Class
+                            { modifiers = [ Scala.Final, Scala.Case ]
+                            , name = typeName |> Name.toTitleCase
+                            , typeArgs = []
+                            , ctorArgs =
+                                 fields
+                                    |> List.map
+                                        (\( field ) ->
+                                            { modifiers = []
+                                            , tpe = mapType field.tpe
+                                            , name = field.name |> Name.toCamelCase
+                                            , defaultValue = Nothing
+                                            }
+                                        )
+                                    |> List.singleton
+                            , extends = []
+                            , members = []
+                            , body = []
+                            }
+                    )
+                )
+             ]
+
+        other ->
+            let
+                _= Debug.log "ERROR -- Kafka Streams; skipping unknown custom type: " other
+            in
+            []
+
+mapType : Type a -> Scala.Type
+mapType tpe =
+    case tpe of
+        Type.Variable a name ->
+            Scala.TypeVar (name |> Name.toTitleCase)
+
+        Type.Reference a fQName argTypes ->
+            let
+                typeRef = Scala.TypeRef [] (FQName.getLocalName fQName |> Name.toTitleCase)
+            in
+            if List.isEmpty argTypes then
+                typeRef
+
+            else
+                Scala.TypeApply typeRef (argTypes |> List.map mapType)
+
+        Type.Tuple a elemTypes ->
+            Scala.TupleType (elemTypes |> List.map mapType)
+
+        Type.Record a fields ->
+            Scala.StructuralType
+                (fields
+                    |> List.map
+                        (\field ->
+                            Scala.FunctionDecl
+                                { modifiers = []
+                                , name = Common.mapValueName field.name
+                                , typeArgs = []
+                                , args = []
+                                , returnType = Just (mapType field.tpe)
+                                , body = Nothing
+                                }
+                        )
+                )
+
+        Type.ExtensibleRecord a argName fields ->
+            Scala.StructuralType
+                (fields
+                    |> List.map
+                        (\field ->
+                            Scala.FunctionDecl
+                                { modifiers = []
+                                , name = Common.mapValueName field.name
+                                , typeArgs = []
+                                , args = []
+                                , returnType = Just (mapType field.tpe)
+                                , body = Nothing
+                                }
+                        )
+                )
+
+        Type.Function a argType returnType ->
+            Scala.FunctionType (mapType argType) (mapType returnType)
+
+        Type.Unit a ->
+            Scala.TypeRef [ "scala" ] "Unit"
+
 
 mapFunctionDefinition: Distribution -> FQName -> Result Error Scala.MemberDecl
 mapFunctionDefinition ir ((_, _, functionName) as fullyQualifiedFunctionName) =
     let
         _= Debug.log "Compiling Function " (Name.toCamelCase functionName)
+
+        mapValueType : List ( Name, va, Type () ) -> Type ()
+        mapValueType inputTypes =
+            inputTypes
+               |> List.map
+                   (\(_, _, argType) ->
+                       case argType of
+                            Type.Reference _ ( [ [ "morphir" ], [ "s", "d", "k" ] ], [ [ "list" ] ], [ "list" ] ) [ valueType ] ->
+                                valueType
+
+                            other -> (Type.Unit ())
+                   )
+               |> List.head
+               |> Maybe.withDefault (Type.Unit ())
 
         mapFunctionInputs : List ( Name, va, Type () ) -> Result Error (List Scala.ArgDecl)
         mapFunctionInputs inputTypes =
@@ -118,10 +238,10 @@ mapFunctionDefinition ir ((_, _, functionName) as fullyQualifiedFunctionName) =
                         -- we only support List type which maps to a KStream
                         -- could we support Set type by mapppin it to a KTable (?)
                         case argType of
-                            Type.Reference _ ( [ [ "morphir" ], [ "s", "d", "k" ] ], [ [ "list" ] ], [ "list" ] ) [ _ ] ->
+                            Type.Reference _ ( [ [ "morphir" ], [ "s", "d", "k" ] ], [ [ "list" ] ], [ "list" ] ) [ valueType ] ->
                                 Ok
                                     { modifiers = []
-                                    , tpe = KafkaStreams.kStream
+                                    , tpe = (KafkaStreams.kStream (mapType valueType))
                                     , name = Name.toCamelCase argName
                                     , defaultValue = Nothing
                                     }
@@ -142,6 +262,10 @@ mapFunctionDefinition ir ((_, _, functionName) as fullyQualifiedFunctionName) =
             |> Result.fromMaybe (FunctionNotFound fullyQualifiedFunctionName)
             |> Result.andThen
                 (\functionDef ->
+                    let
+                        valueType : Type ()
+                        valueType = mapValueType functionDef.inputTypes
+                    in
                     Result.map2
                         (\scalaArgs scalaFunctionBody ->
                             Scala.FunctionDecl
@@ -149,7 +273,7 @@ mapFunctionDefinition ir ((_, _, functionName) as fullyQualifiedFunctionName) =
                                 , name = functionName |> Name.toCamelCase
                                 , typeArgs = []
                                 , args = [ scalaArgs ]
-                                , returnType = Just KafkaStreams.kStream
+                                , returnType = Just (KafkaStreams.kStream (mapType valueType))
                                 , body = Just scalaFunctionBody
                                 }
                         )
@@ -172,6 +296,9 @@ mapObjectExpressionToScala objectExpression =
 
 mapExpression : Expression -> Scala.Value
 mapExpression expression =
+    let
+        _= Debug.log "debug: " expression
+    in
     case expression of
         Literal literal ->
             mapLiteral literal |> Scala.Literal
@@ -179,11 +306,14 @@ mapExpression expression =
         Variable name ->
             Scala.Variable name
 
+        Field fieldName ->
+            KafkaStreams.field (Scala.Variable "test") fieldName
+
         Lambda parameter body ->
             -- we hard-code Kafka Streams' kv-pair
             --   key is unused (as _)
             --   value variable name is taken from original Elm program
-            Scala.Lambda [("_", Nothing), (Name.toCamelCase parameter, Nothing)] (mapExpression body)
+            Scala.Lambda [("_", Nothing), (Name.toCamelCase parameter, Nothing)] (mapExpressionWithVar body parameter)
 
 
         BinaryOperation simpleExpression leftExpr rightExpr ->
@@ -191,6 +321,34 @@ mapExpression expression =
                 (mapExpression leftExpr)
                 simpleExpression
                 (mapExpression rightExpr)
+
+mapExpressionWithVar : Expression -> Name -> Scala.Value
+mapExpressionWithVar expression lambdaVariable =
+    let
+        _= Debug.log "debug: " expression
+    in
+    case expression of
+        Literal literal ->
+            mapLiteral literal |> Scala.Literal
+
+        Variable name ->
+            Scala.Variable name
+
+        Field fieldName ->
+            KafkaStreams.field (Scala.Variable (Name.toCamelCase lambdaVariable)) fieldName
+
+        Lambda parameter body ->
+            -- we hard-code Kafka Streams' kv-pair
+            --   key is unused (as _)
+            --   value variable name is taken from original Elm program
+            Scala.Lambda [("_", Nothing), (Name.toCamelCase parameter, Nothing)] (mapExpressionWithVar body parameter)
+
+
+        BinaryOperation simpleExpression leftExpr rightExpr ->
+            Scala.BinOp
+                (mapExpressionWithVar leftExpr lambdaVariable)
+                simpleExpression
+                (mapExpressionWithVar rightExpr lambdaVariable)
 
 mapLiteral : Literal -> Scala.Lit
 mapLiteral l =
