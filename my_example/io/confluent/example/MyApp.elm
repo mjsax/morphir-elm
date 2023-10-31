@@ -39,5 +39,5 @@ job input =
 example: List String -> List String
 example kstream =
     kstream
-        |> List.filter (\myValue -> True)
+        |> List.filter (\myValue -> myValue == "keep-it")
 

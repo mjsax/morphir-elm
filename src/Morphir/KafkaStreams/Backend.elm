@@ -176,11 +176,21 @@ mapExpression expression =
         Literal literal ->
             mapLiteral literal |> Scala.Literal
 
+        Variable name ->
+            Scala.Variable name
+
         Lambda parameter body ->
             -- we hard-code Kafka Streams' kv-pair
             --   key is unused (as _)
             --   value variable name is taken from original Elm program
             Scala.Lambda [("_", Nothing), (Name.toCamelCase parameter, Nothing)] (mapExpression body)
+
+
+        BinaryOperation simpleExpression leftExpr rightExpr ->
+            Scala.BinOp
+                (mapExpression leftExpr)
+                simpleExpression
+                (mapExpression rightExpr)
 
 mapLiteral : Literal -> Scala.Lit
 mapLiteral l =
