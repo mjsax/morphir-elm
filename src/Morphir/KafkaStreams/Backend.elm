@@ -164,7 +164,7 @@ mapObjectExpressionToScala objectExpression =
             Name.toCamelCase name |> Scala.Variable |> Ok
 
         Filter predicate inputKStream ->
-            mapObjectExpressionToScala  inputKStream
+            mapObjectExpressionToScala inputKStream
                 |> Result.map
                     (KafkaStreams.streamFilter
                         (mapExpression predicate)
@@ -175,6 +175,12 @@ mapExpression expression =
     case expression of
         Literal literal ->
             mapLiteral literal |> Scala.Literal
+
+        Lambda parameter body ->
+            -- we hard-code Kafka Streams' kv-pair
+            --   key is unused (as _)
+            --   value variable name is taken from original Elm program
+            Scala.Lambda [("_", Nothing), (Name.toCamelCase parameter, Nothing)] (mapExpression body)
 
 mapLiteral : Literal -> Scala.Lit
 mapLiteral l =

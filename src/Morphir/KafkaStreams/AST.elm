@@ -24,6 +24,7 @@ type ObjectExpression
 
 type Expression
     = Literal Literal
+    | Lambda Name Expression -- we limit our lambda to a single input parameter (namly the Kafka Streams value) for now
 
 objectExpressionFromValue : Distribution -> TypedValue -> Result Error ObjectExpression
 objectExpressionFromValue ir morphirValue =
@@ -54,11 +55,13 @@ expressionFromValue ir morphirValue =
         Value.Literal _ literal ->
             Literal literal |> Ok
 
-        Value.Lambda _ _ body ->
+        Value.Lambda _ (Value.AsPattern _ (Value.WildcardPattern _) parameter) body ->
             expressionFromValue ir body
+                |> Result.map (\expression -> Lambda parameter expression)
 
         other ->
             let
                 _ = Debug.log "CRASH -- KafkaStreams unhandled expression: " other
             in
             Err (UnhandledExpression other)
+

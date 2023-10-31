@@ -7,14 +7,12 @@ kStream: Scala.Type
 kStream =
     Scala.TypeRef [ "org", "apache", "kafka", "streams", "scala", "kstream" ] "KStream[Null,String]"
 
-
 streamFilter : Scala.Value -> Scala.Value -> Scala.Value
-streamFilter predicate from =
+streamFilter lambda inputKStream =
     Scala.Apply
         (Scala.Select
-            from
+            inputKStream
             "filter" -- Scala .filter() function
         )
-        [ Scala.ArgValue Nothing (Scala.Lambda [("k", Nothing), ("v", Nothing)] predicate)
-        ]
+        [ Scala.ArgValue Nothing lambda ]
 
