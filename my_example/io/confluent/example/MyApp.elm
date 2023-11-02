@@ -9,12 +9,10 @@ request availability requestedQuantity =
         Err "Insufficient availability"
 -}
 
--- MyRecord is hard-codes as input/output generic for now
 type alias MyRecord =
     { number1 : Int
     , number2 : Int
     }
-
 
 {-
 type alias RecordB =

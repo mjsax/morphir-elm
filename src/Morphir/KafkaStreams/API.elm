@@ -29,12 +29,6 @@ streamFilter lambda inputKStream =
         )
         [ Scala.ArgValue Nothing lambda ]
 
-{-
-field: String -> Scala.Value
-field name =
-    Scala.Apply (Scala.Ref [ "org", "apache", "spark", "sql", "functions" ] "col")
-        [ Scala.ArgValue Nothing (Scala.Literal (Scala.StringLit name)) ]
--}
 field: Scala.Value -> String -> Scala.Value
 field variable attribute =
     Scala.Select variable attribute
